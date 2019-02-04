@@ -110,7 +110,7 @@ class CornersSelectionAlgorithm:
             new_corners_coordinates = cv2.goodFeaturesToTrack(
                 image,
                 maxCorners=0,
-                qualityLevel=0.01,
+                qualityLevel=0.01,  # todo: which value to choose?
                 minDistance=self.__responsibility_radius,
                 blockSize=self.__block_size
             ).reshape(-1, 2)
