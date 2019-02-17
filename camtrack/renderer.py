@@ -53,10 +53,11 @@ def _build_cloud_program():
     )
 
 
-def _build_track_program():
+def _build_elements_program():
     example_vertex_shader = shaders.compileShader(
         """
         #version 130
+        
         uniform mat4 mvp;
 
         in vec3 position;
@@ -71,41 +72,12 @@ def _build_track_program():
         """
         #version 130
 
-        out vec3 out_color;
-
-        void main() {
-            out_color = vec3(1.0, 1.0, 1.0);
-        }""",
-        GL.GL_FRAGMENT_SHADER
-    )
-
-    return shaders.compileProgram(
-        example_vertex_shader, example_fragment_shader
-    )
-
-
-def _build_frustum_program():
-    example_vertex_shader = shaders.compileShader(
-        """
-        #version 130
-        uniform mat4 mvp;
-
-        in vec3 position;
-
-        void main() {
-            vec4 ndc_position = mvp * vec4(position, 1.0);
-            gl_Position = ndc_position;
-        }""",
-        GL.GL_VERTEX_SHADER
-    )
-    example_fragment_shader = shaders.compileShader(
-        """
-        #version 130
+        uniform vec3 color;
 
         out vec3 out_color;
 
         void main() {
-            out_color = vec3(1.0, 1.0, 0.0);
+            out_color = color;
         }""",
         GL.GL_FRAGMENT_SHADER
     )
@@ -145,8 +117,7 @@ class CameraTrackRenderer:
         self._colors_buffer_object = vbo.VBO(colors)
 
         self._cloud_program = _build_cloud_program()
-        self._track_program = _build_track_program()
-        self._frustum_program = _build_frustum_program()
+        self._elements_program = _build_elements_program()
 
         GLUT.glutInitDisplayMode(GLUT.GLUT_RGBA | GLUT.GLUT_DOUBLE | GLUT.GLUT_DEPTH)
         GL.glEnable(GL.GL_DEPTH_TEST)
@@ -170,8 +141,7 @@ class CameraTrackRenderer:
 
         tracked_cam_track_pos = int(tracked_cam_track_pos_float)
 
-        track = np.array(list(map(lambda pose: pose.t_vec, self._tracked_cam_track[:tracked_cam_track_pos + 1]))).reshape(-1).astype(np.float32)
-        track_buffer = vbo.VBO(track)
+        track = np.array(list(map(lambda pose: pose.t_vec, self._tracked_cam_track[:tracked_cam_track_pos + 1]))).astype(np.float32)
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
@@ -185,7 +155,7 @@ class CameraTrackRenderer:
         mvp = projection_matrix.dot(view_matrix.dot(model_matrix))
 
         self._render_cloud(mvp)
-        self._render_camera_track(mvp, track_buffer, tracked_cam_track_pos + 1)
+        self._render_camera_track(mvp, track)
         self._render_frustum(
             mvp,
             self.calculate_frustum_points(
@@ -278,48 +248,37 @@ class CameraTrackRenderer:
 
         shaders.glUseProgram(0)
 
-    def _render_camera_track(self, mvp, track_buffer, number_of_positions):
-        shaders.glUseProgram(self._track_program)
-
-        GL.glUniformMatrix4fv(
-            GL.glGetUniformLocation(self._track_program, 'mvp'),
-            1, True, mvp)
-
-        track_buffer.bind()
-        position_loc = GL.glGetAttribLocation(self._track_program, 'position')
-        GL.glEnableVertexAttribArray(position_loc)
-        GL.glVertexAttribPointer(position_loc, 3, GL.GL_FLOAT,
-                                 False, 0,
-                                 track_buffer)
-
-        GL.glDrawArrays(GL.GL_LINE_STRIP, 0, number_of_positions)
-
-        GL.glDisableVertexAttribArray(position_loc)
-
-        track_buffer.unbind()
-
-        shaders.glUseProgram(0)
+    def _render_camera_track(self, mvp, track):
+        self._render_elements(mvp, np.array([1.0, 1.0, 1.0], dtype=np.float32), track, GL.GL_LINE_STRIP)
 
     def _render_frustum(self, mvp, frustum_points):
-        shaders.glUseProgram(self._frustum_program)
+        self._render_elements(mvp, np.array([1.0, 1.0, 0.0], dtype=np.float32), frustum_points, GL.GL_LINE_LOOP)
 
-        frustum_buffer = vbo.VBO(frustum_points.reshape(-1))
+    def _render_elements(self, mvp, color, points, mode):
+        shaders.glUseProgram(self._elements_program)
+
+        buffer = vbo.VBO(points.reshape(-1))
 
         GL.glUniformMatrix4fv(
-            GL.glGetUniformLocation(self._frustum_program, 'mvp'),
+            GL.glGetUniformLocation(self._elements_program, 'mvp'),
             1, True, mvp)
 
-        frustum_buffer.bind()
-        position_loc = GL.glGetAttribLocation(self._frustum_program, 'position')
+        GL.glUniform3fv(
+            GL.glGetUniformLocation(self._elements_program, 'color'),
+            1, color
+        )
+
+        buffer.bind()
+        position_loc = GL.glGetAttribLocation(self._elements_program, 'position')
         GL.glEnableVertexAttribArray(position_loc)
         GL.glVertexAttribPointer(position_loc, 3, GL.GL_FLOAT,
                                  False, 0,
-                                 frustum_buffer)
+                                 buffer)
 
-        GL.glDrawArrays(GL.GL_LINE_LOOP, 0, 4)
+        GL.glDrawArrays(mode, 0, points.shape[0])
 
         GL.glDisableVertexAttribArray(position_loc)
 
-        frustum_buffer.unbind()
+        buffer.unbind()
 
         shaders.glUseProgram(0)
