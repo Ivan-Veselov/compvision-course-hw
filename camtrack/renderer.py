@@ -22,20 +22,28 @@ def _build_example_program():
         uniform mat4 mvp;
 
         in vec3 position;
+        in vec3 vColor;
+        
+        out vec3 fColor;
 
         void main() {
-            vec4 camera_space_position = mvp * vec4(position, 1.0);
-            gl_Position = camera_space_position;
+            vec4 ndc_position = mvp * vec4(position, 1.0);
+            gl_Position = ndc_position;
+            
+            fColor = vColor;
         }""",
         GL.GL_VERTEX_SHADER
     )
     example_fragment_shader = shaders.compileShader(
         """
         #version 130
+        
+        in vec3 fColor;
+        
         out vec3 out_color;
 
         void main() {
-            out_color = vec3(1, 0, 0);
+            out_color = fColor;
         }""",
         GL.GL_FRAGMENT_SHADER
     )
@@ -43,7 +51,6 @@ def _build_example_program():
     return shaders.compileProgram(
         example_vertex_shader, example_fragment_shader
     )
-
 
 class CameraTrackRenderer:
 
@@ -66,7 +73,10 @@ class CameraTrackRenderer:
         self._number_of_points = len(point_cloud.ids)
 
         points = point_cloud.points.reshape(-1).astype(np.float32)
-        self._example_buffer_object = vbo.VBO(points)
+        colors = point_cloud.colors.reshape(-1).astype(np.float32)
+
+        self._points_buffer_object = vbo.VBO(points)
+        self._colors_buffer_object = vbo.VBO(colors)
 
         self._example_program = _build_example_program()
 
@@ -141,18 +151,31 @@ class CameraTrackRenderer:
 
     def _render_example_point(self, mvp):
         shaders.glUseProgram(self._example_program)
-        self._example_buffer_object.bind()
+
         GL.glUniformMatrix4fv(
             GL.glGetUniformLocation(self._example_program, 'mvp'),
             1, True, mvp)
+
+        self._points_buffer_object.bind()
         position_loc = GL.glGetAttribLocation(self._example_program, 'position')
         GL.glEnableVertexAttribArray(position_loc)
         GL.glVertexAttribPointer(position_loc, 3, GL.GL_FLOAT,
                                  False, 0,
-                                 self._example_buffer_object)
+                                 self._points_buffer_object)
+
+        self._colors_buffer_object.bind()
+        vColor_loc = GL.glGetAttribLocation(self._example_program, 'vColor')
+        GL.glEnableVertexAttribArray(vColor_loc)
+        GL.glVertexAttribPointer(vColor_loc, 3, GL.GL_FLOAT,
+                                 False, 0,
+                                 self._colors_buffer_object)
 
         GL.glDrawArrays(GL.GL_POINTS, 0, self._number_of_points)
 
         GL.glDisableVertexAttribArray(position_loc)
-        self._example_buffer_object.unbind()
+        GL.glDisableVertexAttribArray(vColor_loc)
+
+        self._colors_buffer_object.unbind()
+        self._points_buffer_object.unbind()
+
         shaders.glUseProgram(0)
