@@ -52,6 +52,37 @@ def _build_example_program():
         example_vertex_shader, example_fragment_shader
     )
 
+
+def _build_track_program():
+    example_vertex_shader = shaders.compileShader(
+        """
+        #version 130
+        uniform mat4 mvp;
+
+        in vec3 position;
+
+        void main() {
+            vec4 ndc_position = mvp * vec4(position, 1.0);
+            gl_Position = ndc_position;
+        }""",
+        GL.GL_VERTEX_SHADER
+    )
+    example_fragment_shader = shaders.compileShader(
+        """
+        #version 130
+
+        out vec3 out_color;
+
+        void main() {
+            out_color = vec3(1.0, 1.0, 1.0);
+        }""",
+        GL.GL_FRAGMENT_SHADER
+    )
+
+    return shaders.compileProgram(
+        example_vertex_shader, example_fragment_shader
+    )
+
 class CameraTrackRenderer:
 
     def __init__(self,
@@ -70,6 +101,8 @@ class CameraTrackRenderer:
         :param point_cloud: colored point cloud
         """
 
+        self._tracked_cam_track = tracked_cam_track
+
         self._number_of_points = len(point_cloud.ids)
 
         points = point_cloud.points.reshape(-1).astype(np.float32)
@@ -79,6 +112,7 @@ class CameraTrackRenderer:
         self._colors_buffer_object = vbo.VBO(colors)
 
         self._example_program = _build_example_program()
+        self._track_program = _build_track_program()
 
         GLUT.glutInitDisplayMode(GLUT.GLUT_RGBA | GLUT.GLUT_DOUBLE | GLUT.GLUT_DEPTH)
         GL.glEnable(GL.GL_DEPTH_TEST)
@@ -99,7 +133,11 @@ class CameraTrackRenderer:
 
         # a frame in which a tracked camera model and frustrum should be drawn
         # without interpolation
+
         tracked_cam_track_pos = int(tracked_cam_track_pos_float)
+
+        track = np.array(list(map(lambda pose: pose.t_vec, self._tracked_cam_track[:tracked_cam_track_pos + 1]))).reshape(-1).astype(np.float32)
+        track_buffer = vbo.VBO(track)
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
@@ -107,18 +145,13 @@ class CameraTrackRenderer:
         model_matrix[1, 1] = -1.
         model_matrix[2, 2] = -1.
 
-        view_matrix = np.eye(4, dtype=np.float32)
-        view_matrix[:, 3] = np.append(-camera_tr_vec, 1)
-
-        rotation_inverse = np.linalg.inv(camera_rot_mat)
-        rotation_inverse = np.vstack((rotation_inverse, [0., 0., 0.]))
-        rotation_inverse = np.hstack((rotation_inverse, [[0.], [0.], [0.], [1.]]))
-        view_matrix = rotation_inverse.dot(view_matrix)
-
+        view_matrix = self._calculate_view_matrix(camera_tr_vec, camera_rot_mat)
         projection_matrix = self._calculate_projection_matrix(camera_fov_y, 0.2, 100.)
 
         mvp = projection_matrix.dot(view_matrix.dot(model_matrix))
+
         self._render_example_point(mvp)
+        self._render_camera_track(mvp, track_buffer, tracked_cam_track_pos + 1)
         GLUT.glutSwapBuffers()
 
     @staticmethod
@@ -149,6 +182,15 @@ class CameraTrackRenderer:
 
         return matrix
 
+    def _calculate_view_matrix(self, camera_tr_vec, camera_rot_mat):
+        view_matrix = np.eye(4, dtype=np.float32)
+        view_matrix[:, 3] = np.append(-camera_tr_vec, 1)
+
+        rotation_inverse = np.linalg.inv(camera_rot_mat)
+        rotation_inverse = np.vstack((rotation_inverse, [0., 0., 0.]))
+        rotation_inverse = np.hstack((rotation_inverse, [[0.], [0.], [0.], [1.]]))
+        return rotation_inverse.dot(view_matrix)
+
     def _render_example_point(self, mvp):
         shaders.glUseProgram(self._example_program)
 
@@ -177,5 +219,27 @@ class CameraTrackRenderer:
 
         self._colors_buffer_object.unbind()
         self._points_buffer_object.unbind()
+
+        shaders.glUseProgram(0)
+
+    def _render_camera_track(self, mvp, track_buffer, number_of_positions):
+        shaders.glUseProgram(self._track_program)
+
+        GL.glUniformMatrix4fv(
+            GL.glGetUniformLocation(self._track_program, 'mvp'),
+            1, True, mvp)
+
+        track_buffer.bind()
+        position_loc = GL.glGetAttribLocation(self._track_program, 'position')
+        GL.glEnableVertexAttribArray(position_loc)
+        GL.glVertexAttribPointer(position_loc, 3, GL.GL_FLOAT,
+                                 False, 0,
+                                 track_buffer)
+
+        GL.glDrawArrays(GL.GL_LINE_STRIP, 0, number_of_positions)
+
+        GL.glDisableVertexAttribArray(position_loc)
+
+        track_buffer.unbind()
 
         shaders.glUseProgram(0)
