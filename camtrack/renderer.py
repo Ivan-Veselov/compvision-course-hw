@@ -161,7 +161,8 @@ class CameraTrackRenderer:
             self.calculate_frustum_points(
                 self._tracked_cam_track[tracked_cam_track_pos],
                 self._tracked_cam_parameters
-            )
+            ),
+            self._tracked_cam_track[tracked_cam_track_pos].t_vec
         )
 
         GLUT.glutSwapBuffers()
@@ -251,8 +252,18 @@ class CameraTrackRenderer:
     def _render_camera_track(self, mvp, track):
         self._render_elements(mvp, np.array([1.0, 1.0, 1.0], dtype=np.float32), track, GL.GL_LINE_STRIP)
 
-    def _render_frustum(self, mvp, frustum_points):
+    def _render_frustum(self, mvp, frustum_points, camera_pos):
         self._render_elements(mvp, np.array([1.0, 1.0, 0.0], dtype=np.float32), frustum_points, GL.GL_LINE_LOOP)
+
+        connection_points = np.array(
+            [camera_pos, frustum_points[0],
+            camera_pos, frustum_points[1],
+            camera_pos, frustum_points[2],
+            camera_pos, frustum_points[3]],
+            dtype=np.float32
+        )
+
+        self._render_elements(mvp, np.array([1.0, 1.0, 0.0], dtype=np.float32), connection_points, GL.GL_LINES)
 
     def _render_elements(self, mvp, color, points, mode):
         shaders.glUseProgram(self._elements_program)
