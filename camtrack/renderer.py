@@ -15,7 +15,7 @@ from OpenGL.arrays import vbo
 import data3d
 
 
-def _build_example_program():
+def _build_cloud_program():
     example_vertex_shader = shaders.compileShader(
         """
         #version 130
@@ -83,6 +83,38 @@ def _build_track_program():
         example_vertex_shader, example_fragment_shader
     )
 
+
+def _build_frustum_program():
+    example_vertex_shader = shaders.compileShader(
+        """
+        #version 130
+        uniform mat4 mvp;
+
+        in vec3 position;
+
+        void main() {
+            vec4 ndc_position = mvp * vec4(position, 1.0);
+            gl_Position = ndc_position;
+        }""",
+        GL.GL_VERTEX_SHADER
+    )
+    example_fragment_shader = shaders.compileShader(
+        """
+        #version 130
+
+        out vec3 out_color;
+
+        void main() {
+            out_color = vec3(1.0, 1.0, 0.0);
+        }""",
+        GL.GL_FRAGMENT_SHADER
+    )
+
+    return shaders.compileProgram(
+        example_vertex_shader, example_fragment_shader
+    )
+
+
 class CameraTrackRenderer:
 
     def __init__(self,
@@ -102,6 +134,7 @@ class CameraTrackRenderer:
         """
 
         self._tracked_cam_track = tracked_cam_track
+        self._tracked_cam_parameters = tracked_cam_parameters
 
         self._number_of_points = len(point_cloud.ids)
 
@@ -111,8 +144,9 @@ class CameraTrackRenderer:
         self._points_buffer_object = vbo.VBO(points)
         self._colors_buffer_object = vbo.VBO(colors)
 
-        self._example_program = _build_example_program()
+        self._cloud_program = _build_cloud_program()
         self._track_program = _build_track_program()
+        self._frustum_program = _build_frustum_program()
 
         GLUT.glutInitDisplayMode(GLUT.GLUT_RGBA | GLUT.GLUT_DOUBLE | GLUT.GLUT_DEPTH)
         GL.glEnable(GL.GL_DEPTH_TEST)
@@ -150,8 +184,16 @@ class CameraTrackRenderer:
 
         mvp = projection_matrix.dot(view_matrix.dot(model_matrix))
 
-        self._render_example_point(mvp)
+        self._render_cloud(mvp)
         self._render_camera_track(mvp, track_buffer, tracked_cam_track_pos + 1)
+        self._render_frustum(
+            mvp,
+            self.calculate_frustum_points(
+                self._tracked_cam_track[tracked_cam_track_pos],
+                self._tracked_cam_parameters
+            )
+        )
+
         GLUT.glutSwapBuffers()
 
     @staticmethod
@@ -182,7 +224,8 @@ class CameraTrackRenderer:
 
         return matrix
 
-    def _calculate_view_matrix(self, camera_tr_vec, camera_rot_mat):
+    @staticmethod
+    def _calculate_view_matrix(camera_tr_vec, camera_rot_mat):
         view_matrix = np.eye(4, dtype=np.float32)
         view_matrix[:, 3] = np.append(-camera_tr_vec, 1)
 
@@ -191,22 +234,35 @@ class CameraTrackRenderer:
         rotation_inverse = np.hstack((rotation_inverse, [[0.], [0.], [0.], [1.]]))
         return rotation_inverse.dot(view_matrix)
 
-    def _render_example_point(self, mvp):
-        shaders.glUseProgram(self._example_program)
+    def calculate_frustum_points(self, camera_pos: data3d.Pose, camera_parameters: data3d.CameraParameters):
+        z = 10.
+
+        ymax = z * np.tan(camera_parameters.fov_y)
+        xmax = ymax * camera_parameters.aspect_ratio
+
+        ur_corner = camera_pos.r_mat.dot(np.array([xmax, ymax, z])) + camera_pos.t_vec
+        br_corner = camera_pos.r_mat.dot(np.array([xmax, -ymax, z])) + camera_pos.t_vec
+        bl_corner = camera_pos.r_mat.dot(np.array([-xmax, -ymax, z])) + camera_pos.t_vec
+        ul_corner = camera_pos.r_mat.dot(np.array([-xmax, ymax, z])) + camera_pos.t_vec
+
+        return np.array([ur_corner, br_corner, bl_corner, ul_corner], dtype=np.float32)
+
+    def _render_cloud(self, mvp):
+        shaders.glUseProgram(self._cloud_program)
 
         GL.glUniformMatrix4fv(
-            GL.glGetUniformLocation(self._example_program, 'mvp'),
+            GL.glGetUniformLocation(self._cloud_program, 'mvp'),
             1, True, mvp)
 
         self._points_buffer_object.bind()
-        position_loc = GL.glGetAttribLocation(self._example_program, 'position')
+        position_loc = GL.glGetAttribLocation(self._cloud_program, 'position')
         GL.glEnableVertexAttribArray(position_loc)
         GL.glVertexAttribPointer(position_loc, 3, GL.GL_FLOAT,
                                  False, 0,
                                  self._points_buffer_object)
 
         self._colors_buffer_object.bind()
-        vColor_loc = GL.glGetAttribLocation(self._example_program, 'vColor')
+        vColor_loc = GL.glGetAttribLocation(self._cloud_program, 'vColor')
         GL.glEnableVertexAttribArray(vColor_loc)
         GL.glVertexAttribPointer(vColor_loc, 3, GL.GL_FLOAT,
                                  False, 0,
@@ -241,5 +297,29 @@ class CameraTrackRenderer:
         GL.glDisableVertexAttribArray(position_loc)
 
         track_buffer.unbind()
+
+        shaders.glUseProgram(0)
+
+    def _render_frustum(self, mvp, frustum_points):
+        shaders.glUseProgram(self._frustum_program)
+
+        frustum_buffer = vbo.VBO(frustum_points.reshape(-1))
+
+        GL.glUniformMatrix4fv(
+            GL.glGetUniformLocation(self._frustum_program, 'mvp'),
+            1, True, mvp)
+
+        frustum_buffer.bind()
+        position_loc = GL.glGetAttribLocation(self._frustum_program, 'position')
+        GL.glEnableVertexAttribArray(position_loc)
+        GL.glVertexAttribPointer(position_loc, 3, GL.GL_FLOAT,
+                                 False, 0,
+                                 frustum_buffer)
+
+        GL.glDrawArrays(GL.GL_LINE_LOOP, 0, 4)
+
+        GL.glDisableVertexAttribArray(position_loc)
+
+        frustum_buffer.unbind()
 
         shaders.glUseProgram(0)
