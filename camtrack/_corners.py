@@ -32,9 +32,9 @@ class FrameCorners:
     (np.searchsorted).
     """
 
-    __slots__ = ('_ids', '_points', '_sizes')
+    __slots__ = ('_ids', '_points', '_sizes', '_is_new', '_min_eigen')
 
-    def __init__(self, ids, points, sizes):
+    def __init__(self, ids, points, sizes, is_new, min_eigen):
         """
         Construct FrameCorners.
 
@@ -48,6 +48,8 @@ class FrameCorners:
         self._ids = ids[sorting_idx].reshape(-1, 1)
         self._points = points[sorting_idx].reshape(-1, 2)
         self._sizes = sizes[sorting_idx].reshape(-1, 1)
+        self._is_new = is_new[sorting_idx].reshape(-1, 1)
+        self._min_eigen = min_eigen[sorting_idx].reshape(-1, 1)
 
     @property
     def ids(self):
@@ -61,10 +63,20 @@ class FrameCorners:
     def sizes(self):
         return self._sizes
 
+    @property
+    def is_new(self):
+        return self._is_new
+
+    @property
+    def min_eigen(self):
+        return self._min_eigen
+
     def __iter__(self):
         yield self.ids
         yield self.points
         yield self.sizes
+        yield self.is_new
+        yield self.min_eigen
 
 
 def filter_frame_corners(frame_corners: FrameCorners,
@@ -77,6 +89,10 @@ def filter_frame_corners(frame_corners: FrameCorners,
     :return: filtered corners.
     """
     return FrameCorners(*[field[mask] for field in frame_corners])
+
+
+def concat_frame_corners(frame_corners1: FrameCorners, frame_corners2: FrameCorners) -> FrameCorners:
+    return FrameCorners(*[np.concatenate((field[0], field[1])) for field in zip(frame_corners1, frame_corners2)])
 
 
 def _to_int_tuple(point):
@@ -92,10 +108,15 @@ def draw(grayscale_image: np.ndarray, corners: FrameCorners) -> np.ndarray:
     :return: BGR image with drawn corners.
     """
     bgr = cv2.cvtColor(grayscale_image, cv2.COLOR_GRAY2BGR)
-    for point, block_size in zip(corners.points, corners.sizes):
+    for point, block_size, is_new in zip(corners.points, corners.sizes, corners.is_new):
         point = _to_int_tuple(point)
         radius = block_size / 2
-        cv2.circle(bgr, point, radius, (0, 1, 0))
+
+        color = (0, 1, 0)
+        if is_new:
+            color = (0, 0, 1)
+
+        cv2.circle(bgr, point, radius, color)
     return bgr
 
 
