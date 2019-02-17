@@ -18,7 +18,7 @@ import data3d
 def _build_example_program():
     example_vertex_shader = shaders.compileShader(
         """
-        #version 140
+        #version 130
         uniform mat4 mvp;
 
         in vec3 position;
@@ -31,7 +31,7 @@ def _build_example_program():
     )
     example_fragment_shader = shaders.compileShader(
         """
-        #version 140
+        #version 130
         out vec3 out_color;
 
         void main() {
@@ -63,7 +63,10 @@ class CameraTrackRenderer:
         :param point_cloud: colored point cloud
         """
 
-        self._example_buffer_object = vbo.VBO(np.array([0, 0, 0], dtype=np.float32))
+        self._number_of_points = len(point_cloud.ids)
+
+        points = point_cloud.points.reshape(-1).astype(np.float32)
+        self._example_buffer_object = vbo.VBO(points)
 
         self._example_program = _build_example_program()
 
@@ -90,9 +93,51 @@ class CameraTrackRenderer:
 
         GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
 
-        self._render_example_point(np.eye(4))
+        model_matrix = np.eye(4, dtype=np.float32)
+        model_matrix[1, 1] = -1.
+        model_matrix[2, 2] = -1.
 
+        view_matrix = np.eye(4, dtype=np.float32)
+        view_matrix[:, 3] = np.append(-camera_tr_vec, 1)
+
+        rotation_inverse = np.linalg.inv(camera_rot_mat)
+        rotation_inverse = np.vstack((rotation_inverse, [0., 0., 0.]))
+        rotation_inverse = np.hstack((rotation_inverse, [[0.], [0.], [0.], [1.]]))
+        view_matrix = rotation_inverse.dot(view_matrix)
+
+        projection_matrix = self._calculate_projection_matrix(camera_fov_y, 0.2, 100.)
+
+        mvp = projection_matrix.dot(view_matrix.dot(model_matrix))
+        self._render_example_point(mvp)
         GLUT.glutSwapBuffers()
+
+    @staticmethod
+    def _calculate_aspect_ratio():
+        window_width = GLUT.glutGet(GLUT.GLUT_WINDOW_WIDTH)
+        window_height = GLUT.glutGet(GLUT.GLUT_WINDOW_HEIGHT)
+
+        return window_width / window_height
+
+    def _calculate_projection_matrix(self, fovy, znear, zfar):
+        aspect_ratio = self._calculate_aspect_ratio()
+
+        ymax = znear * np.tan(fovy)
+        xmax = ymax * aspect_ratio
+
+        width = 2 * xmax
+        height = 2 * ymax
+
+        matrix = np.zeros((4, 4), dtype=np.float32)
+        matrix[0, 0] = 2. * znear / width
+        matrix[1, 1] = 2. * znear / height
+
+        tmp = zfar - znear
+        matrix[2, 2] = (-zfar - znear) / tmp
+        matrix[2, 3] = (-2. * znear * zfar) / tmp
+
+        matrix[3, 2] = -1.
+
+        return matrix
 
     def _render_example_point(self, mvp):
         shaders.glUseProgram(self._example_program)
@@ -106,7 +151,7 @@ class CameraTrackRenderer:
                                  False, 0,
                                  self._example_buffer_object)
 
-        GL.glDrawArrays(GL.GL_POINTS, 0, 1)
+        GL.glDrawArrays(GL.GL_POINTS, 0, self._number_of_points)
 
         GL.glDisableVertexAttribArray(position_loc)
         self._example_buffer_object.unbind()
