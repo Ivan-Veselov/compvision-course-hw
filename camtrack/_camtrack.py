@@ -338,8 +338,8 @@ def draw_residuals(grayscale_image: np.ndarray, corners: FrameCorners,
         projected_point = _to_int_tuple(projected_point)
         corner_radius = int(corner_size.item() / 2)
         cv2.line(bgr, corner_point, projected_point, (0.7, 0.7, 0))
-        cv2.circle(bgr, corner_point, corner_radius, (0, 1, 0))
-        _draw_cross(bgr, projected_point, 5, (0.5, 0, 1))
+        cv2.circle(bgr, corner_point, int(corner_radius * 1.5), (0, 1, 0))
+        _draw_cross(bgr, projected_point, int(5 * 1.5), (0.5, 0, 1))
 
     return bgr
 
@@ -433,7 +433,10 @@ def create_cli(track_and_calc_colors):
                 bgra = draw_residuals(grayscale, corner_storage[frame],
                                       point_cloud, camera_parameters,
                                       poses[frame])
-                cv2.imshow('Frame', bgra)
+
+                # 1366 x 768
+                aspect_ratio = bgra.shape[1] / bgra.shape[0]
+                cv2.imshow('Frame', cv2.resize(bgra, (1280, int(1280 / aspect_ratio))))
                 key = chr(cv2.waitKey(20) & 0xFF)
                 if key == 'r':
                     frame = 0
