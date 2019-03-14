@@ -42,6 +42,9 @@ class CameraTracker:
     def __calculate_pose(self, frame_corners1: FrameCorners, frame_corners2: FrameCorners):
         correspondences = build_correspondences(frame_corners1, frame_corners2)
 
+        if correspondences.points_1.shape[0] <= 5:
+            return None, None
+
         E, mask = findEssentialMat(correspondences.points_1, correspondences.points_2, self.__intrinsic_mat)  # todo: have parameters
         mask = mask.reshape(-1)
         filtered_correspondences = build_correspondences(frame_corners1, frame_corners2, np.nonzero(1 - mask)[0])
@@ -67,7 +70,7 @@ class CameraTracker:
             pose_cloud_size.append(ids.shape[0])
 
         index = np.argmax(pose_cloud_size)
-        if pose_cloud_size[index] == 0:
+        if pose_cloud_size[index] < 10:
             return None, None
 
         pose = possible_poses[index]
@@ -80,6 +83,7 @@ class CameraTracker:
         return pose, fundamental_inliers / homography_inliers
 
     def __track_initialization(self):
+        # todo: consider amount of points that can be restored!!! 2 points in house
         poses, qualities = zip(*[self.__calculate_pose(self.__corner_storage[0], i) for i in self.__corner_storage])
         index = np.nanargmax(np.array(qualities, dtype=np.float32))
 
@@ -117,6 +121,7 @@ def _track_camera(corner_storage: CornerStorage,
 
     tracker = CameraTracker(corner_storage, intrinsic_mat)
 
+    # todo: solvePnPRansac()
     return tracker.get_frame_matrices(), tracker.get_cloud_builder()
 
 
