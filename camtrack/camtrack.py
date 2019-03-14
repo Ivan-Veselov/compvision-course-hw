@@ -1,5 +1,5 @@
 #! /usr/bin/env python3
-from cv2.cv2 import findFundamentalMat, findHomography, RANSAC
+from cv2.cv2 import findFundamentalMat, findHomography, RANSAC, findEssentialMat, decomposeEssentialMat
 
 from _corners import FrameCorners
 
@@ -42,23 +42,14 @@ class CameraTracker:
     def __calculate_pose(self, frame_corners1: FrameCorners, frame_corners2: FrameCorners):
         correspondences = build_correspondences(frame_corners1, frame_corners2)
 
-        F, mask = findFundamentalMat(correspondences.points_1, correspondences.points_2)  # todo: have parameters
+        E, mask = findEssentialMat(correspondences.points_1, correspondences.points_2, self.__intrinsic_mat)  # todo: have parameters
         mask = mask.reshape(-1)
         filtered_correspondences = build_correspondences(frame_corners1, frame_corners2, np.nonzero(1 - mask)[0])
 
         fundamental_inliers = np.count_nonzero(mask)
 
-        E = self.__intrinsic_mat.T.dot(F).dot(self.__intrinsic_mat)
-
-        U, s, Vt = np.linalg.svd(E)
-
-        R1 = U.dot(W_MATRIX).dot(Vt)
-        R2 = U.dot(W_MATRIX.T).dot(Vt)
-        if np.linalg.det(R1) < 0:
-            R1 *= -1
-            R2 *= -1
-
-        t1 = U[:, 2]
+        R1, R2, t1 = decomposeEssentialMat(E)
+        t1.reshape(-1)
         t2 = -t1
 
         possible_poses = [Pose(R1, t1), Pose(R1, t2), Pose(R2, t1), Pose(R2, t2)]
