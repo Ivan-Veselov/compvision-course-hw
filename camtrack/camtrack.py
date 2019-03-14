@@ -51,6 +51,14 @@ class CameraTracker:
 
         fundamental_inliers = np.count_nonzero(mask)
 
+        H, mask = findHomography(correspondences.points_1, correspondences.points_2, RANSAC)  # todo: configure
+        mask = mask.reshape(-1)
+
+        homography_inliers = np.count_nonzero(mask)
+
+        if fundamental_inliers / homography_inliers < 1.5:
+            return None, None
+
         R1, R2, t1 = decomposeEssentialMat(E)
         t1.reshape(-1)
         t2 = -t1
@@ -70,20 +78,14 @@ class CameraTracker:
             pose_cloud_size.append(ids.shape[0])
 
         index = np.argmax(pose_cloud_size)
-        if pose_cloud_size[index] < 10:
+        if pose_cloud_size[index] == 0:
             return None, None
 
         pose = possible_poses[index]
 
-        H, mask = findHomography(correspondences.points_1, correspondences.points_2, RANSAC)  # todo: configure
-        mask = mask.reshape(-1)
-
-        homography_inliers = np.count_nonzero(mask)
-
-        return pose, fundamental_inliers / homography_inliers
+        return pose, pose_cloud_size[index]
 
     def __track_initialization(self):
-        # todo: consider amount of points that can be restored!!! 2 points in house
         poses, qualities = zip(*[self.__calculate_pose(self.__corner_storage[0], i) for i in self.__corner_storage])
         index = np.nanargmax(np.array(qualities, dtype=np.float32))
 
