@@ -29,13 +29,13 @@ class CameraTracker:
         max_id = np.amax(np.concatenate([corners.ids for corners in corner_storage]))
 
         self.__id_to_position = [None for _ in range(max_id + 1)]
+        self.__id_to_position_old = [None for _ in range(max_id + 1)]
         self.__frame_matrix = [None for _ in corner_storage]
 
         self.__corner_storage = corner_storage
         self.__intrinsic_mat = intrinsic_mat
 
         self.__triangulation_parameters = TriangulationParameters(max_reprojection_error=1., min_triangulation_angle_deg=4., min_depth=0.1)
-        # todo: configure
 
         self.__track_initialization()
 
@@ -94,10 +94,14 @@ class CameraTracker:
         self.__update_cloud(0, index)
 
         frames_left = len(self.__frame_matrix) - 2
-        for _ in range(frames_left):
-        #for _ in range(30):
-            frame_id = self.__best_frame_to_estimate()
-            self.__add_frame(frame_id)
+        #for _ in range(frames_left):
+        for _ in range(0): # 10
+            mask = np.ones(len(self.__frame_matrix))
+            frame_id = self.__best_frame_to_estimate(mask)
+            while not self.__add_frame(frame_id):
+                mask[frame_id] = False
+                frame_id = self.__best_frame_to_estimate(mask)
+
             for id, matrix in enumerate(self.__frame_matrix):
                 if matrix is None or id == frame_id:
                     continue
@@ -114,6 +118,7 @@ class CameraTracker:
     def __update_cloud(self, frame_id1, frame_id2):
         correspondences = build_correspondences(self.__corner_storage[frame_id1], self.__corner_storage[frame_id2])
 
+        print('updating')
         positions, ids = triangulate_correspondences(
             correspondences,
             self.__frame_matrix[frame_id1],
@@ -140,12 +145,12 @@ class CameraTracker:
 
         return frame_corners.ids[mask, 0], frame_corners.points[mask]
 
-    def __best_frame_to_estimate(self):
+    def __best_frame_to_estimate(self, mask):
         max_num_of_points = 0
         best_index = -1
 
         for index, matrix in enumerate(self.__frame_matrix):
-            if matrix is not None:
+            if matrix is not None or not mask[index]:
                 continue
 
             num_of_points_on_frame = len(self.__points_on_frame(self.__corner_storage[index])[0])
@@ -155,16 +160,36 @@ class CameraTracker:
 
         return best_index
 
+    def __populate_frame(self, index):
+        restored_num = 0
+        for id in self.__corner_storage[index].ids[:, 0]:
+            if self.__id_to_position[id] is None and self.__id_to_position_old[id] is not None:
+                self.__id_to_position[id] = self.__id_to_position_old[id]
+                restored_num += 1
+
+        if restored_num > 0:
+            print("Restored {} points for PnP".format(restored_num))
+
     def __add_frame(self, index):
         ids, image_points = self.__points_on_frame(self.__corner_storage[index])
-        object_points = []
 
+        if ids.shape[0] < 6:
+            self.__populate_frame(index)
+            ids, image_points = self.__points_on_frame(self.__corner_storage[index])
+            if ids.shape[0] < 6:
+                pass  # todo???
+
+        object_points = []
         for id in ids:
             object_points.append(self.__id_to_position[id])
 
         object_points = np.array(object_points)
+
         retval, rvec, tvec, inliers = solvePnPRansac(object_points, image_points, self.__intrinsic_mat, None)
         # todo: configure
+
+        if not retval:
+            return False
 
         inliers = inliers.reshape(-1)
         mask = np.ones(ids.shape[0], dtype=np.bool)
@@ -172,6 +197,7 @@ class CameraTracker:
 
         outliers_num = 0
         for outlier_id in ids[mask]:
+            self.__id_to_position_old[outlier_id] = self.__id_to_position[outlier_id]
             self.__id_to_position[outlier_id] = None
             outliers_num += 1
 
@@ -179,6 +205,8 @@ class CameraTracker:
             print('PnP excluded {} outliers'.format(outliers_num))
 
         self.__frame_matrix[index] = rodrigues_and_translation_to_view_mat3x4(rvec, tvec)
+        print('Restored camera on frame #{}'.format(index))
+        return True
 
 
     def get_frame_matrices(self) -> List[np.ndarray]:
