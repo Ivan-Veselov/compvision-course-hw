@@ -25,19 +25,26 @@ W_MATRIX = np.array([
 
 
 class CameraTracker:
-    def __init__(self, corner_storage: CornerStorage, intrinsic_mat: np.ndarray):
+    def __init__(self, corner_storage: CornerStorage, intrinsic_mat: np.ndarray, triangulation_parameters: TriangulationParameters):
         max_id = np.amax(np.concatenate([corners.ids for corners in corner_storage]))
 
         self.__id_to_position = [None for _ in range(max_id + 1)]
-        self.__id_to_position_old = [None for _ in range(max_id + 1)]
+        self.__number_of_times_deleted = [0 for _ in range(max_id + 1)]
         self.__frame_matrix = [None for _ in corner_storage]
 
         self.__corner_storage = corner_storage
         self.__intrinsic_mat = intrinsic_mat
 
-        self.__triangulation_parameters = TriangulationParameters(max_reprojection_error=1., min_triangulation_angle_deg=4., min_depth=0.1)
+        self.__triangulation_parameters = triangulation_parameters
+
+        self.__failed = False
 
         self.__track_initialization()
+        self.__track_frames()
+
+        for i in range(len(self.__frame_matrix)):
+            if self.__frame_matrix[i] is None:
+                self.__frame_matrix[i] = eye3x4()
 
     def __calculate_pose(self, frame_corners1: FrameCorners, frame_corners2: FrameCorners):
         correspondences = build_correspondences(frame_corners1, frame_corners2)
@@ -56,7 +63,7 @@ class CameraTracker:
 
         homography_inliers = np.count_nonzero(mask)
 
-        if fundamental_inliers / homography_inliers < 1.5:
+        if fundamental_inliers / homography_inliers < 1.1: # 1.5
             return None, None
 
         R1, R2, t1 = decomposeEssentialMat(E)
@@ -85,20 +92,16 @@ class CameraTracker:
 
         return pose, pose_cloud_size[index]
 
-    def __track_initialization(self):
-        poses, qualities = zip(*[self.__calculate_pose(self.__corner_storage[0], i) for i in self.__corner_storage])
-        index = np.nanargmax(np.array(qualities, dtype=np.float32))
-
-        self.__frame_matrix[0] = eye3x4()
-        self.__frame_matrix[index] = pose_to_view_mat3x4(poses[index])
-        self.__update_cloud(0, index)
-
+    def __track_frames(self):
         frames_left = len(self.__frame_matrix) - 2
-        #for _ in range(frames_left):
-        for _ in range(0): # 10
+        for _ in range(frames_left):
+        #for _ in range(0): # 10
             mask = np.ones(len(self.__frame_matrix))
             frame_id = self.__best_frame_to_estimate(mask)
             while not self.__add_frame(frame_id):
+                if self.__failed:
+                    return
+
                 mask[frame_id] = False
                 frame_id = self.__best_frame_to_estimate(mask)
 
@@ -111,14 +114,17 @@ class CameraTracker:
             frames_left -= 1
             print('Frames left: {}'.format(frames_left))
 
-        for i in range(len(self.__frame_matrix)):
-            if self.__frame_matrix[i] is None:
-                self.__frame_matrix[i] = eye3x4()
+    def __track_initialization(self):
+        poses, qualities = zip(*[self.__calculate_pose(self.__corner_storage[0], i) for i in self.__corner_storage])
+        index = np.nanargmax(np.array(qualities, dtype=np.float32))
+
+        self.__frame_matrix[0] = eye3x4()
+        self.__frame_matrix[index] = pose_to_view_mat3x4(poses[index])
+        self.__update_cloud(0, index)
 
     def __update_cloud(self, frame_id1, frame_id2):
         correspondences = build_correspondences(self.__corner_storage[frame_id1], self.__corner_storage[frame_id2])
 
-        print('updating')
         positions, ids = triangulate_correspondences(
             correspondences,
             self.__frame_matrix[frame_id1],
@@ -160,24 +166,12 @@ class CameraTracker:
 
         return best_index
 
-    def __populate_frame(self, index):
-        restored_num = 0
-        for id in self.__corner_storage[index].ids[:, 0]:
-            if self.__id_to_position[id] is None and self.__id_to_position_old[id] is not None:
-                self.__id_to_position[id] = self.__id_to_position_old[id]
-                restored_num += 1
-
-        if restored_num > 0:
-            print("Restored {} points for PnP".format(restored_num))
-
     def __add_frame(self, index):
         ids, image_points = self.__points_on_frame(self.__corner_storage[index])
 
         if ids.shape[0] < 6:
-            self.__populate_frame(index)
-            ids, image_points = self.__points_on_frame(self.__corner_storage[index])
-            if ids.shape[0] < 6:
-                pass  # todo???
+            self.__failed = True
+            return False
 
         object_points = []
         for id in ids:
@@ -197,7 +191,6 @@ class CameraTracker:
 
         outliers_num = 0
         for outlier_id in ids[mask]:
-            self.__id_to_position_old[outlier_id] = self.__id_to_position[outlier_id]
             self.__id_to_position[outlier_id] = None
             outliers_num += 1
 
@@ -218,12 +211,19 @@ class CameraTracker:
 
         return PointCloudBuilder(ids, positions)
 
+    def is_failed(self):
+        return self.__failed
+
 
 def _track_camera(corner_storage: CornerStorage,
                   intrinsic_mat: np.ndarray) \
         -> Tuple[List[np.ndarray], PointCloudBuilder]:
 
-    tracker = CameraTracker(corner_storage, intrinsic_mat)
+    max_reprojection_error = 1.
+    tracker = CameraTracker(corner_storage, intrinsic_mat,
+                            TriangulationParameters(max_reprojection_error=max_reprojection_error,
+                                                    min_triangulation_angle_deg=4., min_depth=0.1))
+
     return tracker.get_frame_matrices(), tracker.get_cloud_builder()
 
 

@@ -208,8 +208,6 @@ def triangulate_correspondences(correspondences: Correspondences,
         parameters.max_reprojection_error
     )
 
-    print(reprojection_error_mask)
-
     z_mask_1 = _calc_z_mask(points3d, view_mat_1, parameters.min_depth)
     z_mask_2 = _calc_z_mask(points3d, view_mat_2, parameters.min_depth)
     angle_mask = _calc_triangulation_angle_mask(
@@ -439,7 +437,11 @@ def create_cli(track_and_calc_colors):
 
                 # 1366 x 768
                 aspect_ratio = bgra.shape[1] / bgra.shape[0]
-                cv2.imshow('Frame', cv2.resize(bgra, (1280, int(1280 / aspect_ratio))))
+
+                if bgra.shape[1] > 1280:
+                    bgra = cv2.resize(bgra, (1280, int(1280 / aspect_ratio)))
+
+                cv2.imshow('Frame', bgra)
                 key = chr(cv2.waitKey(20) & 0xFF)
                 if key == 'r':
                     frame = 0
