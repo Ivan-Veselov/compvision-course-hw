@@ -207,7 +207,6 @@ def triangulate_correspondences(correspondences: Correspondences,
         intrinsic_mat,
         parameters.max_reprojection_error
     )
-
     z_mask_1 = _calc_z_mask(points3d, view_mat_1, parameters.min_depth)
     z_mask_2 = _calc_z_mask(points3d, view_mat_2, parameters.min_depth)
     angle_mask = _calc_triangulation_angle_mask(
