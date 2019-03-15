@@ -1,5 +1,5 @@
 #! /usr/bin/env python3
-from cv2.cv2 import findFundamentalMat, findHomography, RANSAC, findEssentialMat, decomposeEssentialMat
+from cv2.cv2 import findFundamentalMat, findHomography, RANSAC, findEssentialMat, decomposeEssentialMat, solvePnPRansac
 
 from _corners import FrameCorners
 
@@ -34,7 +34,7 @@ class CameraTracker:
         self.__corner_storage = corner_storage
         self.__intrinsic_mat = intrinsic_mat
 
-        self.__triangulation_parameters = TriangulationParameters(max_reprojection_error=1, min_triangulation_angle_deg=1., min_depth=0.)
+        self.__triangulation_parameters = TriangulationParameters(max_reprojection_error=1., min_triangulation_angle_deg=4., min_depth=0.1)
         # todo: configure
 
         self.__track_initialization()
@@ -89,9 +89,27 @@ class CameraTracker:
         poses, qualities = zip(*[self.__calculate_pose(self.__corner_storage[0], i) for i in self.__corner_storage])
         index = np.nanargmax(np.array(qualities, dtype=np.float32))
 
-        self.__frame_matrix = [eye3x4() for i in self.__corner_storage]
+        self.__frame_matrix[0] = eye3x4()
         self.__frame_matrix[index] = pose_to_view_mat3x4(poses[index])
         self.__update_cloud(0, index)
+
+        frames_left = len(self.__frame_matrix) - 2
+        for _ in range(frames_left):
+        #for _ in range(30):
+            frame_id = self.__best_frame_to_estimate()
+            self.__add_frame(frame_id)
+            for id, matrix in enumerate(self.__frame_matrix):
+                if matrix is None or id == frame_id:
+                    continue
+
+                self.__update_cloud(id, frame_id)
+
+            frames_left -= 1
+            print('Frames left: {}'.format(frames_left))
+
+        for i in range(len(self.__frame_matrix)):
+            if self.__frame_matrix[i] is None:
+                self.__frame_matrix[i] = eye3x4()
 
     def __update_cloud(self, frame_id1, frame_id2):
         correspondences = build_correspondences(self.__corner_storage[frame_id1], self.__corner_storage[frame_id2])
@@ -104,8 +122,64 @@ class CameraTracker:
             self.__triangulation_parameters
         )
 
+        points_added = 0
         for pos, id in zip(positions, ids):
-            self.__id_to_position[id] = pos
+            if self.__id_to_position[id] is None:
+                self.__id_to_position[id] = pos
+                points_added += 1
+
+        if points_added > 0:
+            print('Frame {} and {}: {} 3d points added'.format(frame_id1, frame_id2, points_added))
+
+    def __points_on_frame(self, frame_corners: FrameCorners):
+        mask = np.ones(frame_corners.ids.shape[0], dtype=np.bool)
+
+        for i in range(mask.shape[0]):
+            if self.__id_to_position[frame_corners.ids[i][0]] is None:
+                mask[i] = 0
+
+        return frame_corners.ids[mask, 0], frame_corners.points[mask]
+
+    def __best_frame_to_estimate(self):
+        max_num_of_points = 0
+        best_index = -1
+
+        for index, matrix in enumerate(self.__frame_matrix):
+            if matrix is not None:
+                continue
+
+            num_of_points_on_frame = len(self.__points_on_frame(self.__corner_storage[index])[0])
+            if num_of_points_on_frame > max_num_of_points:
+                max_num_of_points = num_of_points_on_frame
+                best_index = index
+
+        return best_index
+
+    def __add_frame(self, index):
+        ids, image_points = self.__points_on_frame(self.__corner_storage[index])
+        object_points = []
+
+        for id in ids:
+            object_points.append(self.__id_to_position[id])
+
+        object_points = np.array(object_points)
+        retval, rvec, tvec, inliers = solvePnPRansac(object_points, image_points, self.__intrinsic_mat, None)
+        # todo: configure
+
+        inliers = inliers.reshape(-1)
+        mask = np.ones(ids.shape[0], dtype=np.bool)
+        mask[inliers] = 0
+
+        outliers_num = 0
+        for outlier_id in ids[mask]:
+            self.__id_to_position[outlier_id] = None
+            outliers_num += 1
+
+        if outliers_num > 0:
+            print('PnP excluded {} outliers'.format(outliers_num))
+
+        self.__frame_matrix[index] = rodrigues_and_translation_to_view_mat3x4(rvec, tvec)
+
 
     def get_frame_matrices(self) -> List[np.ndarray]:
         return self.__frame_matrix
@@ -122,8 +196,6 @@ def _track_camera(corner_storage: CornerStorage,
         -> Tuple[List[np.ndarray], PointCloudBuilder]:
 
     tracker = CameraTracker(corner_storage, intrinsic_mat)
-
-    # todo: solvePnPRansac()
     return tracker.get_frame_matrices(), tracker.get_cloud_builder()
 
 
