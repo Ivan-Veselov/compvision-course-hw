@@ -177,7 +177,7 @@ class CameraTrackRenderer:
     def _calculate_projection_matrix(self, fovy, znear, zfar):
         aspect_ratio = self._calculate_aspect_ratio()
 
-        ymax = znear * np.tan(fovy)
+        ymax = znear * np.tan(fovy / 2)
         xmax = ymax * aspect_ratio
 
         width = 2 * xmax
