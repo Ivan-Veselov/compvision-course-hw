@@ -66,11 +66,12 @@ class CameraTracker:
         if fundamental_inliers / homography_inliers < 1.1: # 1.5
             return None, None
 
-        R1, R2, t1 = decomposeEssentialMat(E)
-        t1.reshape(-1)
-        t2 = -t1
+        R1, R2, t = decomposeEssentialMat(E)
 
-        possible_poses = [Pose(R1, t1), Pose(R1, t2), Pose(R2, t1), Pose(R2, t2)]
+        pose1 = view_mat3x4_to_pose(np.concatenate((R1, t), axis=1))
+        pose2 = view_mat3x4_to_pose(np.concatenate((R2, t), axis=1))
+
+        possible_poses = [pose1, pose2, Pose(pose1.r_mat, -pose1.t_vec), Pose(pose2.r_mat, -pose2.t_vec)]
 
         pose_cloud_size = []
         for pose in possible_poses:
